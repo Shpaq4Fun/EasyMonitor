@@ -62,9 +62,10 @@ extensions.configure<com.chaquo.python.ChaquopyExtension>("chaquopy") {
     defaultConfig {
         version = "3.10"
         pip {
-            install("numpy")
-            install("scipy")
+            install("numpy<2.0.0")
+            install("scipy<1.14.0")
             install("matplotlib")
+            install("neurokit2")
         }
     }
 }

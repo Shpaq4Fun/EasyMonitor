@@ -313,11 +313,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 state.copy(
                     recordings = state.recordings + newRecording,
                     selectedRecordingId = newRecording.id,
-                    recordingState = RecordingState.FINISHED,
+                    recordingState = RecordingState.PROCESSING,
                     offlineResult = null,
                     offlineResults = emptyList()
                 )
             }
+            runAnalysisForSelected(newRecording.id, currentConfig)
         } else {
             _uiState.update { it.copy(recordingState = RecordingState.FINISHED) }
         }
@@ -363,6 +364,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val methodName = when (config.offlineMethod) {
             OfflineMethod.STFT -> "Spectrogram (STFT)"
+            OfflineMethod.REASSIGNED_SPECTROGRAM -> "Reassigned Spectrogram"
+            OfflineMethod.SPWVD -> "SPWVD (Smoothed WVD)"
             OfflineMethod.CSC -> "Cyclic Spectral Coherence (CSC)"
         }
 
@@ -402,7 +405,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             waveformSummary[i] = maxAmp
         }
 
-        // Batch processing: call PythonBridge for STFT/CSC computations
+        // Batch processing: call PythonBridge for STFT/Reassigned/SPWVD/CSC computations
         var spectrogramFrames: List<FloatArray> = emptyList()
         var plotImageBytes: ByteArray? = null
         var dominantFreqHz = 0f
@@ -411,6 +414,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             OfflineMethod.STFT -> {
                 try {
                     val pyResult = PythonBridge.getSpectrogram(
+                        samples = samples,
+                        sampleRate = config.sampleRate,
+                        fftSize = config.frameSize,
+                        hopSize = config.hopSize
+                    )
+                    spectrogramFrames = pyResult.spectrogram
+                    plotImageBytes = pyResult.imageBytes
+                    dominantFreqHz = pyResult.dominantFreqHz
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            OfflineMethod.REASSIGNED_SPECTROGRAM -> {
+                try {
+                    val pyResult = PythonBridge.getReassignedSpectrogram(
+                        samples = samples,
+                        sampleRate = config.sampleRate,
+                        fftSize = config.frameSize,
+                        hopSize = config.hopSize
+                    )
+                    spectrogramFrames = pyResult.spectrogram
+                    plotImageBytes = pyResult.imageBytes
+                    dominantFreqHz = pyResult.dominantFreqHz
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            OfflineMethod.SPWVD -> {
+                try {
+                    val pyResult = PythonBridge.getSpwvd(
                         samples = samples,
                         sampleRate = config.sampleRate,
                         fftSize = config.frameSize,

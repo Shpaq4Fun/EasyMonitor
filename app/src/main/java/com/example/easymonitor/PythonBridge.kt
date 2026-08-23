@@ -42,6 +42,64 @@ object PythonBridge {
         )
     }
 
+    fun getReassignedSpectrogram(
+        samples: FloatArray,
+        sampleRate: Int,
+        fftSize: Int,
+        hopSize: Int
+    ): PythonSpectrogramResult {
+        val py = Python.getInstance()
+        val module = py.getModule("dsp_engine")
+        val resultPy = module.callAttr(
+            "compute_reassigned_spectrogram",
+            samples,
+            sampleRate,
+            fftSize,
+            hopSize
+        )
+        val resultMap = resultPy.asMap()
+
+        val imageBytes = resultMap[PyObject.fromJava("image_bytes")]?.toJava(ByteArray::class.java)
+        val dominantFreqHz = resultMap[PyObject.fromJava("dominant_freq_hz")]?.toFloat() ?: 0f
+
+        return PythonSpectrogramResult(
+            spectrogram = emptyList(),
+            imageBytes = imageBytes,
+            frequencies = FloatArray(0),
+            times = FloatArray(0),
+            dominantFreqHz = dominantFreqHz
+        )
+    }
+
+    fun getSpwvd(
+        samples: FloatArray,
+        sampleRate: Int,
+        fftSize: Int,
+        hopSize: Int
+    ): PythonSpectrogramResult {
+        val py = Python.getInstance()
+        val module = py.getModule("dsp_engine")
+        val resultPy = module.callAttr(
+            "compute_spwvd",
+            samples,
+            sampleRate,
+            fftSize,
+            hopSize
+        )
+        val resultMap = resultPy.asMap()
+
+        val imageBytes = resultMap[PyObject.fromJava("image_bytes")]?.toJava(ByteArray::class.java)
+        val dominantFreqHz = resultMap[PyObject.fromJava("dominant_freq_hz")]?.toFloat() ?: 0f
+
+        return PythonSpectrogramResult(
+            spectrogram = emptyList(),
+            imageBytes = imageBytes,
+            frequencies = FloatArray(0),
+            times = FloatArray(0),
+            dominantFreqHz = dominantFreqHz
+        )
+    }
+
     fun getCsc(
         samples: FloatArray,
         sampleRate: Int,

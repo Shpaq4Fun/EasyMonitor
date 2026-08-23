@@ -187,10 +187,10 @@ def compute_spectrogram(raw_pcm_bytes, sample_rate, fft_size, hop_size):
         signal = np.asarray(raw_pcm_bytes, dtype=np.float32)
         
     noverlap = max(0, fft_size - hop_size)
-    f, t, Sxx = spectrogram(signal, fs=sample_rate, nperseg=fft_size, noverlap=noverlap, nfft=fft_size, window=hann(fft_size))
+    f, t, Sxx = spectrogram(signal, fs=sample_rate, nperseg=fft_size, noverlap=noverlap, nfft=fft_size)
     
     # Fast vectorized log-scale dB
-    Sxx_db = np.log10(Sxx + 1e-10)
+    Sxx_db = 10 * np.log10(np.abs(Sxx) + 1e-10)
     
     # Fast headless rendering with FigureCanvasAgg
     fig = Figure(figsize=(8, 4.8), dpi=180)
@@ -214,10 +214,226 @@ def compute_spectrogram(raw_pcm_bytes, sample_rate, fft_size, hop_size):
     canvas.print_png(buf)
     img_bytes = buf.getvalue()
     
-    max_idx = np.unravel_index(np.argmax(Sxx, axis=None), Sxx.shape)
+    max_idx = np.unravel_index(np.argmax(np.abs(Sxx), axis=None), Sxx.shape)
     max_bin = max_idx[0]
     dominant_freq_hz = float((max_bin * sample_rate) / fft_size)
     
+    return {
+        "image_bytes": img_bytes,
+        "dominant_freq_hz": dominant_freq_hz
+    }
+
+
+def compute_reassigned_spectrogram(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256):
+    if isinstance(raw_pcm_bytes, (bytes, bytearray)):
+        shorts = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
+        signal = shorts.astype(np.float32) * (1.0 / 32768.0)
+    else:
+        signal = np.asarray(raw_pcm_bytes, dtype=np.float32)
+
+    n_fft = int(fft_size) if fft_size > 0 else 512
+    step = int(hop_size) if hop_size > 0 else 256
+    noverlap = max(0, n_fft - step)
+
+    # Standard Gaussian analysis window h(t), derivative dh(t), and time-ramped th(t)
+    std = n_fft / 6.0
+    M = np.arange(n_fft, dtype=np.float32) - (n_fft - 1) / 2.0
+    w = np.exp(-0.5 * (M / std) ** 2).astype(np.float32)
+    dw = (- (M / (std ** 2)) * w).astype(np.float32)
+    tw = (M * w).astype(np.float32)
+
+    # Compute the 3 component STFTs
+    f, t, S = spectrogram(signal, fs=sample_rate, window=w, nperseg=n_fft, noverlap=noverlap, mode='complex', detrend=False)
+    _, _, St = spectrogram(signal, fs=sample_rate, window=tw, nperseg=n_fft, noverlap=noverlap, mode='complex', detrend=False)
+    _, _, Sdt = spectrogram(signal, fs=sample_rate, window=dw, nperseg=n_fft, noverlap=noverlap, mode='complex', detrend=False)
+
+    eps = 1e-12
+    mag_sq = (np.abs(S) ** 2).astype(np.float32)
+
+    # Reassigned coordinates (Auger-Flandrin formulation)
+    t_hat = t[None, :] + np.real(St / (S + eps)) / float(sample_rate)
+    f_hat = f[:, None] - np.imag(Sdt / (S + eps)) / (2.0 * np.pi)
+
+    # Reassign energy into standard (f, t) grid
+    num_f = len(f)
+    num_t = len(t)
+    dt = float(t[1] - t[0]) if num_t > 1 else 1.0 / float(sample_rate)
+    df = float(f[1] - f[0]) if num_f > 1 else 1.0
+
+    t_idx = np.round((t_hat - t[0]) / dt).astype(np.int32)
+    f_idx = np.round((f_hat - f[0]) / df).astype(np.int32)
+
+    valid = (t_idx >= 0) & (t_idx < num_t) & (f_idx >= 0) & (f_idx < num_f)
+    reassigned_matrix = np.zeros((num_f, num_t), dtype=np.float32)
+    np.add.at(reassigned_matrix, (f_idx[valid], t_idx[valid]), mag_sq[valid])
+
+    # Convert energy to dB
+    Sxx_db = 10.0 * np.log10(reassigned_matrix + 1e-10)
+
+    # Headless rendering with FigureCanvasAgg
+    fig = Figure(figsize=(8, 4.8), dpi=180)
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+
+    t_start = float(t[0]) if len(t) > 0 else 0.0
+    t_end = float(t[-1]) if len(t) > 1 else max(1.0, float(len(signal)) / sample_rate)
+
+    im = ax.imshow(
+        Sxx_db,
+        origin='lower',
+        aspect='auto',
+        extent=[t_start, t_end, float(f[0]) / 1000.0, float(f[-1]) / 1000.0],
+        cmap='jet',
+        interpolation='nearest'
+    )
+
+    ax.set_title('Reassigned Spectrogram')
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('Frequency [kHz]')
+    fig.colorbar(im, ax=ax, label='dB')
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    img_bytes = buf.getvalue()
+
+    max_idx = np.unravel_index(np.argmax(reassigned_matrix, axis=None), reassigned_matrix.shape)
+    max_bin = max_idx[0]
+    dominant_freq_hz = float(f[max_bin]) if max_bin < len(f) else 0.0
+
+    return {
+        "image_bytes": img_bytes,
+        "dominant_freq_hz": dominant_freq_hz
+    }
+
+
+def _spwvd_fast(x: np.ndarray, fs: float, n_freq: int = 256, g_len: int = 31, h_len: int = 127):
+    """Compute Smoothed Pseudo Wigner-Ville Distribution (SPWVD) efficiently."""
+    n = len(x)
+    # Analytic signal
+    z = _analytic_signal_f32(x)
+    
+    # Time smoothing window g (length g_len, odd)
+    g = hann(g_len).astype(np.float32)
+    g = g / np.sum(g)
+    g_half = g_len // 2
+    
+    # Frequency smoothing window h (length h_len, odd)
+    h = hann(h_len).astype(np.float32)
+    h = h / h[h_len // 2]
+    h_half = h_len // 2
+    
+    t_indices = np.arange(n)
+    tfr = np.zeros((n_freq, n), dtype=np.float32)
+    
+    for ti, t_val in enumerate(t_indices):
+        tau_max = min(t_val, n - 1 - t_val, h_half)
+        if tau_max < 1:
+            continue
+            
+        r_tau = np.zeros(n_freq, dtype=np.complex64)
+        tau_range = np.arange(-tau_max, tau_max + 1)
+        
+        # Local windowed instantaneous correlation
+        for tau in tau_range:
+            g_tau_sum = 0.0
+            # Time smoothing over mu in [-g_half, g_half]
+            mu_min = max(-g_half, -t_val + abs(tau))
+            mu_max = min(g_half, n - 1 - t_val - abs(tau))
+            if mu_min <= mu_max:
+                mu_vals = np.arange(mu_min, mu_max + 1)
+                t_mu = t_val + mu_vals
+                z_plus = z[t_mu + tau]
+                z_minus = np.conj(z[t_mu - tau])
+                g_weights = g[mu_vals + g_half]
+                g_tau_sum = np.sum(g_weights * z_plus * z_minus)
+                
+            h_weight = h[tau + h_half]
+            r_tau[tau % n_freq] = h_weight * g_tau_sum
+            
+        spec = np.real(fft(r_tau))
+        tfr[:, ti] = spec
+        
+    f = np.linspace(0, fs / 2.0, n_freq // 2, dtype=np.float32)
+    t = np.arange(n, dtype=np.float32) / fs
+    return f, t, tfr[:n_freq // 2, :]
+
+
+def compute_spwvd(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256):
+    if isinstance(raw_pcm_bytes, (bytes, bytearray)):
+        shorts = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
+        signal = shorts.astype(np.float32) * (1.0 / 32768.0)
+    else:
+        signal = np.asarray(raw_pcm_bytes, dtype=np.float32)
+
+    # Cap processing length for fast responsive UI
+    max_dur = 2.0
+    max_samples = min(len(signal), int(max_dur * sample_rate))
+    proc_signal = signal[:max_samples]
+
+    target_len = 500
+    if len(proc_signal) > target_len:
+        step_ds = int(np.ceil(len(proc_signal) / target_len))
+        proc_signal = proc_signal[::step_ds]
+        effective_fs = sample_rate / step_ds
+    else:
+        effective_fs = sample_rate
+
+    # Attempt computation via neurokit2 first, fallback to self-contained SPWVD
+    spwvd_matrix = None
+    f = None
+    t = None
+    try:
+        import neurokit2 as nk
+        f, t, spwvd_matrix = nk.signal_timefrequency(
+            proc_signal,
+            sampling_rate=effective_fs,
+            method="spwvd",
+            show=False
+        )
+    except Exception:
+        pass
+
+    if spwvd_matrix is None:
+        try:
+            f, t, spwvd_matrix = _spwvd_fast(proc_signal, effective_fs, n_freq=min(fft_size, 256))
+        except Exception as e:
+            # Fallback to standard spectrogram if any failure
+            from scipy.signal import spectrogram
+            f, t, spwvd_matrix = spectrogram(proc_signal, fs=effective_fs, nperseg=min(len(proc_signal), 128))
+
+    # Convert to log scale / dB similar to spectrogram
+    spwvd_plot = np.asarray(spwvd_matrix, dtype=np.float32)
+    # Clip negative values if any from cross-terms or numerical artifacts before log
+    spwvd_plot = np.maximum(spwvd_plot, 0)
+    spwvd_db = 10.0 * np.log10(spwvd_plot + 1e-10)
+
+    # Headless rendering matching spectrogram aesthetics
+    fig = Figure(figsize=(8, 4.8), dpi=180)
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    im = ax.imshow(
+        spwvd_db,
+        origin='lower',
+        aspect='auto',
+        extent=[float(t[0]), float(t[-1]), float(f[0]) / 1000.0, float(f[-1]) / 1000.0],
+        cmap='jet',
+        interpolation='nearest'
+    )
+    ax.set_title('SPWVD (Smoothed Pseudo Wigner-Ville Distribution)')
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('Frequency [kHz]')
+    fig.colorbar(im, ax=ax, label='dB')
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    img_bytes = buf.getvalue()
+
+    max_idx = np.unravel_index(np.argmax(spwvd_plot, axis=None), spwvd_plot.shape)
+    max_freq_bin = max_idx[0]
+    dominant_freq_hz = float(f[max_freq_bin]) if max_freq_bin < len(f) else 0.0
+
     return {
         "image_bytes": img_bytes,
         "dominant_freq_hz": dominant_freq_hz

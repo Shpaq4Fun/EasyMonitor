@@ -22,6 +22,14 @@ enum class OfflineMethod(val displayName: String, val description: String) {
         displayName = "STFT (Spectrogram)",
         description = "Short-Time Fourier Transform for time-frequency analysis."
     ),
+    REASSIGNED_SPECTROGRAM(
+        displayName = "Reassigned Spectrogram",
+        description = "Time-frequency reassigned spectrogram (SciPy)."
+    ),
+    SPWVD(
+        displayName = "SPWVD (Smoothed WVD)",
+        description = "Smoothed Pseudo Wigner-Ville Distribution (NeuroKit2)."
+    ),
     CSC(
         displayName = "Cyclic Spectral Coherence",
         description = "Cyclostationary Analysis for modulation detection."
