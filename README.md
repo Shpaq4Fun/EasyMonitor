@@ -86,7 +86,6 @@ Record raw audio into memory buffers and compute comprehensive batch time-freque
   - `numpy`
   - `scipy`
   - `matplotlib`
-  - `neurokit2`
 
 ---
 

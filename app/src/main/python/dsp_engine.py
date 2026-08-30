@@ -32,89 +32,6 @@ def _analytic_signal_f32(x: np.ndarray) -> np.ndarray:
     Xf[(n + 2) // 2:] = 0.0
     return np.fft.ifft(Xf).astype(np.complex64)
 
-
-# def CPS_W(
-#     y: NDArray[np.float64],
-#     x: NDArray[np.float64],
-#     alpha: float,
-#     nfft: int,
-#     Noverlap: int,
-#     Window: Union[NDArray[np.float64], int],
-#     opt: str = 'sym',
-#     P: Optional[float] = None
-# ) -> NDArray[np.complex128]:
-#     """Compute Welch's estimate of the (Cross) Cyclic Power Spectrum (vectorized)."""
-#     if np.isscalar(Window):
-#         Window = hann(int(Window))
-#     Window = np.asarray(Window, dtype=np.float64).flatten()
-    
-#     y = np.asarray(y, dtype=np.complex128).flatten()
-#     x = np.asarray(x, dtype=np.complex128).flatten()
-    
-#     n = len(x)
-#     nwind = len(Window)
-#     step = nwind - Noverlap
-#     K = int((n - Noverlap) / step)
-    
-#     if opt == 'sym':
-#         t = np.arange(n)
-#         y = y * np.exp(-1j * np.pi * alpha * t)
-#         x = x * np.exp(1j * np.pi * alpha * t)
-#     else:
-#         t = np.arange(n)
-#         x = x * np.exp(2j * np.pi * alpha * t)
-        
-#     idx = np.arange(nwind)[None, :] + np.arange(K)[:, None] * step
-#     yw_frames = y[idx] * Window[None, :]
-#     xw_frames = x[idx] * Window[None, :]
-    
-#     Yw = fft(yw_frames, n=nfft, axis=1)
-#     Xw = fft(xw_frames, n=nfft, axis=1)
-    
-#     CPS = np.sum(Yw * np.conj(Xw), axis=0)
-#     KMU = K * np.linalg.norm(Window)**2
-#     return CPS / KMU
-
-
-# def SCoh_W(
-#     y: NDArray[np.float64],
-#     x: NDArray[np.float64],
-#     alpha: float,
-#     nfft: int,
-#     Noverlap: int,
-#     Window: Union[NDArray[np.float64], int],
-#     opt: str = 'sym',
-#     P: Optional[float] = None
-# ) -> NDArray[np.complex128]:
-#     """Compute Welch's estimate of the Cyclic Spectral Coherence (CSC)."""
-#     if np.isscalar(Window):
-#         Window = hann(int(Window))
-#     Window = np.asarray(Window, dtype=np.float64).flatten()
-    
-#     n = len(x)
-#     nwind = len(Window)
-#     step = nwind - Noverlap
-#     K = int((n - Noverlap) / step)
-    
-#     idx = np.arange(nwind)[None, :] + np.arange(K)[:, None] * step
-#     X_frames = (np.asarray(x).flatten()[idx] * Window[None, :]).astype(np.complex128)
-    
-#     l_vec = np.arange(nwind)
-#     m_vec = np.arange(K)
-    
-#     phase_l = np.exp(1j * np.pi * alpha * l_vec)
-#     phase_m = np.exp(-2j * np.pi * alpha * m_vec * step)
-    
-#     U = fft(X_frames * phase_l.conj()[None, :], n=nfft, axis=1)
-#     V = fft(X_frames * phase_l[None, :], n=nfft, axis=1)
-    
-#     Syx = phase_m @ (U * np.conj(V))
-#     Sy = np.sum(np.abs(U)**2, axis=0)
-#     Sx = np.sum(np.abs(V)**2, axis=0)
-    
-#     return Syx / np.sqrt(Sy * Sx)
-
-
 def spectral_coh(
     x: NDArray[np.float32],
     alphamin: float = 1,
@@ -307,8 +224,34 @@ def compute_reassigned_spectrogram(raw_pcm_bytes, sample_rate, fft_size=512, hop
     }
 
 
-def _spwvd_fast(x: np.ndarray, fs: float, n_freq: int = 256, g_len: int = 31, h_len: int = 127):
-    """Compute Smoothed Pseudo Wigner-Ville Distribution (SPWVD) efficiently."""
+def _spwvd_fast(x: np.ndarray, fs: float, n_freq: int = 256, g_len: int = 501, h_len: int = 501):
+    """Compute Smoothed Pseudo Wigner-Ville Distribution (SPWVD) efficiently.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        1D input real-valued signal to analyze.
+    fs : float
+        Sampling frequency of the signal in Hz.
+    n_freq : int, optional
+        Number of frequency bins for the FFT (default is 256). The output 
+        matrix will have n_freq // 2 positive frequency bins.
+    g_len : int, optional
+        Length of the time-smoothing Hann window g (must be odd, default is 501).
+        Controls the degree of time smoothing (suppresses cross-terms along time).
+    h_len : int, optional
+        Length of the frequency-smoothing Hann window h / lag window (must be odd, 
+        default is 501). Controls the degree of frequency smoothing and lag extent.
+
+    Returns 
+    -------
+    f : np.ndarray
+        Frequency vector in Hz, spanning [0, fs / 2].
+    t : np.ndarray
+        Time vector in seconds.
+    tfr : np.ndarray
+        2D matrix of SPWVD energy distribution of shape (n_freq // 2, len(x)).
+    """
     n = len(x)
     # Analytic signal
     z = _analytic_signal_f32(x)
@@ -359,7 +302,7 @@ def _spwvd_fast(x: np.ndarray, fs: float, n_freq: int = 256, g_len: int = 31, h_
     return f, t, tfr[:n_freq // 2, :]
 
 
-def compute_spwvd(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256):
+def compute_spwvd(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256, target_len=5000):
     if isinstance(raw_pcm_bytes, (bytes, bytearray)):
         shorts = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
         signal = shorts.astype(np.float32) * (1.0 / 32768.0)
@@ -371,7 +314,7 @@ def compute_spwvd(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256):
     max_samples = min(len(signal), int(max_dur * sample_rate))
     proc_signal = signal[:max_samples]
 
-    target_len = 500
+    target_len = int(target_len)
     if len(proc_signal) > target_len:
         step_ds = int(np.ceil(len(proc_signal) / target_len))
         proc_signal = proc_signal[::step_ds]
@@ -379,28 +322,8 @@ def compute_spwvd(raw_pcm_bytes, sample_rate, fft_size=512, hop_size=256):
     else:
         effective_fs = sample_rate
 
-    # Attempt computation via neurokit2 first, fallback to self-contained SPWVD
-    spwvd_matrix = None
-    f = None
-    t = None
-    try:
-        import neurokit2 as nk
-        f, t, spwvd_matrix = nk.signal_timefrequency(
-            proc_signal,
-            sampling_rate=effective_fs,
-            method="spwvd",
-            show=False
-        )
-    except Exception:
-        pass
-
-    if spwvd_matrix is None:
-        try:
-            f, t, spwvd_matrix = _spwvd_fast(proc_signal, effective_fs, n_freq=min(fft_size, 256))
-        except Exception as e:
-            # Fallback to standard spectrogram if any failure
-            from scipy.signal import spectrogram
-            f, t, spwvd_matrix = spectrogram(proc_signal, fs=effective_fs, nperseg=min(len(proc_signal), 128))
+    # Compute SPWVD using fast vectorized implementation
+    f, t, spwvd_matrix = _spwvd_fast(proc_signal, effective_fs, n_freq=min(fft_size, 256))
 
     # Convert to log scale / dB similar to spectrogram
     spwvd_plot = np.asarray(spwvd_matrix, dtype=np.float32)

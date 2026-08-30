@@ -22,6 +22,15 @@ android {
         }
     }
 
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
     sourceSets {
         getByName("main") {
             // Python source directory is 'src/main/python' by default.
@@ -54,7 +63,7 @@ android {
     }
 
     androidResources {
-        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:desktop.ini"
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!desktop.ini:!*.ini"
     }
 }
 
@@ -65,7 +74,6 @@ extensions.configure<com.chaquo.python.ChaquopyExtension>("chaquopy") {
             install("numpy<2.0.0")
             install("scipy<1.14.0")
             install("matplotlib")
-            install("neurokit2")
         }
     }
 }
@@ -90,4 +98,25 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+tasks.register("deleteDesktopIni") {
+    doLast {
+        val resDir = file("src/main/res")
+        if (resDir.exists()) {
+            resDir.walkBottomUp().forEach { file ->
+                if (file.name.equals("desktop.ini", ignoreCase = true)) {
+                    file.delete()
+                }
+            }
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Resources") }.configureEach {
+    dependsOn("deleteDesktopIni")
+}
+
+tasks.matching { it.name.startsWith("package") && it.name.endsWith("Resources") }.configureEach {
+    dependsOn("deleteDesktopIni")
 }

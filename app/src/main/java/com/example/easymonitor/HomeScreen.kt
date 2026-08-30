@@ -530,6 +530,27 @@ private fun ConfigurationPanel(
                     enabled = !isRecording
                 )
             }
+
+            if (config.executionMode == ExecutionMode.OFFLINE_POST_RECORDING && config.offlineMethod == OfflineMethod.SPWVD) {
+                var textValue by remember(config.spwvdTargetLen) { mutableStateOf(config.spwvdTargetLen.toString()) }
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = { newValue ->
+                        textValue = newValue
+                        val limit = newValue.toIntOrNull()
+                        if (limit != null && limit >= 1) {
+                            onUpdateConfig(config.copy(spwvdTargetLen = limit))
+                        }
+                    },
+                    label = { Text("SPWVD Target Length") },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isRecording
+                )
+            }
         }
     }
 }

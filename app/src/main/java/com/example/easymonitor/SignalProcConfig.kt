@@ -28,7 +28,7 @@ enum class OfflineMethod(val displayName: String, val description: String) {
     ),
     SPWVD(
         displayName = "SPWVD (Smoothed WVD)",
-        description = "Smoothed Pseudo Wigner-Ville Distribution (NeuroKit2)."
+        description = "Smoothed Pseudo Wigner-Ville Distribution."
     ),
     CSC(
         displayName = "Cyclic Spectral Coherence",
@@ -69,6 +69,7 @@ data class SignalProcConfig(
     val gainMultiplier: Float = 1.0f,
     val maxFrequencyLimit: Int = 300,
     val cscAlphaMax: Int = 150,
+    val spwvdTargetLen: Int = 5000,
     val envelopeAverageCount: Int = 10,
     val envelopePeakCount: Int = 3
 ) {

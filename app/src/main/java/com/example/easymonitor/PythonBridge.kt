@@ -75,7 +75,8 @@ object PythonBridge {
         samples: FloatArray,
         sampleRate: Int,
         fftSize: Int,
-        hopSize: Int
+        hopSize: Int,
+        targetLen: Int
     ): PythonSpectrogramResult {
         val py = Python.getInstance()
         val module = py.getModule("dsp_engine")
@@ -84,7 +85,8 @@ object PythonBridge {
             samples,
             sampleRate,
             fftSize,
-            hopSize
+            hopSize,
+            targetLen
         )
         val resultMap = resultPy.asMap()
 

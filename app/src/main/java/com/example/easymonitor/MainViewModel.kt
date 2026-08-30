@@ -449,7 +449,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         samples = samples,
                         sampleRate = config.sampleRate,
                         fftSize = config.frameSize,
-                        hopSize = config.hopSize
+                        hopSize = config.hopSize,
+                        targetLen = config.spwvdTargetLen
                     )
                     spectrogramFrames = pyResult.spectrogram
                     plotImageBytes = pyResult.imageBytes
